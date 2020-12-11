@@ -1,0 +1,373 @@
+---
+title: "Final project"
+author: "Yuki Wang"
+date: "Fall 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+run the following codes to get started
+```{r}
+library(XML)
+library(tidyverse)
+library(rvest)
+library(lubridate)
+library(readxl)
+library(cowplot)
+library(ggplot2)
+library(stringr)
+library(stargazer)
+```
+
+## 1. Scrape information from the IMF website, organize this data into a dataframe see the voting power of all member states.
+
+scrap from the "IMF Members' Quotas and Voting Power, and IMF Board of Governors" to get the current voting power of member states https://www.imf.org/external/np/sec/memdir/members.aspx#Z
+```{r}
+#get page link
+page_link <- paste0("https://www.imf.org/external/np/sec/memdir/members.aspx")
+  
+#read the search page
+voting <- read_html(page_link) 
+
+#write a function to get all the charts in the link
+number <- function(i){
+  table_votes <- html_table(html_nodes(voting, "table"),fill = TRUE,header=TRUE)[[i]]
+  return(table_votes)
+  }
+votes <- map_dfr(5:28,number)
+  
+# rename the columns
+names(votes)
+votes <- votes %>%
+  rename(country =...1,
+         vote_numbers =VOTES...5,
+         vote_percentage = VOTES...6) 
+
+# To make further calculation, we need to convert 'vote_percentage' to numeric vectors
+  votes$vote_percentage <- as.numeric(votes$vote_percentage)
+
+# make the dataset cleaner 
+  votes <- votes %>%
+    select(country,vote_percentage) %>%
+    arrange(country)%>%
+    na.omit()
+  head(votes)
+# write the dataframe to a csv file. 
+write_csv(votes,"votes.csv")
+```
+
+
+## 2. a statistical analysis of IMF quota and voting rights reform. 
+
+import the dataset 'quotas.xlsx' and make some preliminary calculation 
+```{r}
+quotas <- read_excel("/Users/yuki/Desktop/PLSC 31101/assignments/Final project/data/quotas.xlsx", sheet = 1) 
+
+quotas <- quotas %>%
+  # select columns with calculated quotas
+  select(country,cal_before,cal_review,cal_previous,cal_current) %>%
+  arrange(country)
+
+# To make further calculation, we need to convert certain columns to numeric vectors
+quotas$cal_before <- as.numeric(quotas$cal_before)
+quotas$cal_review <- as.numeric(quotas$cal_review)
+
+# calculate quota growth rates during each period of each country,and define them as new variables
+quotas <- quotas %>%
+  mutate(round1 = (cal_review - cal_before)/ cal_before,
+         round2 = (cal_previous- cal_review)/ cal_review,
+         round3 = (cal_current - cal_previous)/ cal_previous,
+         total = (cal_current - cal_before)/cal_before) 
+head(quotas)
+```
+
+separate three rounds and analyze each of them to find main member countries in the reforms. 
+
+```{r}
+# The first round was from June 2006 - April 2008.
+group1 <- quotas %>%
+  select(country,round1,cal_before)%>%
+  filter(!is.na(round1)) %>%# remove NAs 
+  filter(!is.na(cal_before)) %>%# remove NAs 
+  arrange(-(round1))
+  # find the countries with the highest and lowest quota growth rate during the first round of reform
+positive_group1 <- top_n(group1,30,round1)
+negative_group1 <- top_n(group1,-30,round1) %>%
+  arrange(round1)
+
+  # countries with the highest quota growth rate during the first round reform are all developing countries except Iceland, but countries with the lowest growth rate are not necessarily developed countries. There are also many low-income countries in Africa,which indicates that the first round reform did not improve the status of these countries.
+
+# The second round was from August 2009—July 2012.
+group2 <- quotas %>%
+  select(country,round2,cal_review)%>%
+  filter(!is.na(round2)) %>%# remove NAs 
+  filter(!is.na(cal_review)) %>%# remove NAs 
+  arrange(-(round2))
+
+positive_group2 <- top_n(group2,30,round2)
+negative_group2 <- top_n(group2,-30,round2) %>%
+  arrange(round2)
+  # countries with the highest quota growth rate during the second round reform are all developing countries now 
+
+# The third round was from August 2011—January 2013, but it is not until January 21, 2016 that the proposed amendment on reform of the Executive Board came into force.
+group3 <- quotas %>%
+  select(country,round3,cal_previous)%>%
+  filter(!is.na(round3)) %>%# remove NAs 
+  filter(!is.na(cal_previous)) %>%# remove NAs 
+  arrange(-(round3))
+positive_group3 <- top_n(group3,30,round3)
+negative_group3 <- top_n(group3,-30,round3)%>%
+  arrange(round3)
+# Ireland is a special case
+
+```
+
+Create a new dataframe to analyze three rounds of reform together to see the general trend
+```{r}
+mean1_pq = mean(positive_group1$cal_before)
+mean1_pg = mean(positive_group1$round1)
+mean1_nq = mean(negative_group1$cal_before)
+mean1_ng = mean(negative_group1$round1)
+mean2_pq = mean(positive_group2$cal_review)
+mean2_pg = mean(positive_group2$round2)
+mean2_nq = mean(negative_group2$cal_review)
+mean2_ng = mean(negative_group2$round2)
+mean3_pq = mean(positive_group3$cal_previous)
+mean3_pg = mean(positive_group3$round3)
+mean3_nq = mean(negative_group3$cal_previous)
+mean3_ng = mean(negative_group3$round3)
+
+vec_1 <- c("round1","round2","round3")
+vec_2 <- c(mean1_pq,mean2_pq,mean3_pq,mean1_nq,mean2_nq,mean3_nq)
+vec_3 <- c(mean1_pg,mean2_pg,mean3_pg,mean1_ng,mean2_ng,mean3_ng)
+vec_4 <- c("highgrowth30","highgrowth30","highgrowth30","lowgrowth30","lowgrowth30","lowgrowth30")
+quota_growth <- data.frame(vec_1,vec_2,vec_3,vec_4)
+colnames(quota_growth) <- c("round","avg_quota","avg_rate","type")
+
+p1 <- quota_growth %>%
+  ggplot(aes(x=round, y=avg_quota, color=type))+
+  geom_point(size=1.5)+
+  labs(title="Average Quotas Over time", #title 
+       x="reform", #x axis
+       y="Average Quota")+ #y axis
+  #adjut title, axies, legends
+  theme(axis.text.x = element_text(size=5), 
+        axis.title.x = element_text(size=8), 
+        axis.title.y = element_text(size=8),
+        plot.title=element_text(size=8), 
+        legend.key.size = unit(0.3, "cm"), 
+        legend.title = element_text(size=8), 
+        legend.text = element_text(size=5)) 
+
+p2 <- quota_growth %>%
+  ggplot(aes(x=round, y=avg_rate, color=type))+
+  geom_point(size=1.5)+
+  labs(title="Average Growth Rate Over time", #title 
+       x="reform", #x axis
+       y="Average Growth Rate")+ #y axis
+  #adjut title, axies, legends
+  theme(axis.text.x = element_text(size=5), 
+        axis.title.x = element_text(size=8), 
+        axis.title.y = element_text(size=8),
+        plot.title=element_text(size=8), 
+        legend.key.size = unit(0.3, "cm"), 
+        legend.title = element_text(size=8), 
+        legend.text = element_text(size=5)) 
+
+cowplot::plot_grid(p1,p2,nrow = 1,ncol = 2) 
+
+```
+Focus on all the member states
+```{r}
+ggplot(quotas, aes(x=cal_before, y=total))+
+  geom_point(size=0.5)+
+  scale_x_log10()+
+  scale_y_log10()+
+  labs(title="Quota growth rate by Quota, 2006-2016", 
+       x="Quotas before the first round reform", 
+       y="Quota growth rate during the three rounds of reform")+
+  geom_smooth(color="red", fill="red", size =0.5)+ 
+    #adjust axis, title and legend
+  theme(axis.text.x = element_text(size=5), 
+        axis.title.x=element_text(size=8), 
+        axis.title.y = element_text(size=5), 
+        axis.text.y = element_text(size=5),
+        plot.title=element_text(size=8), 
+        legend.key.size = unit(0.3, "cm"), 
+        legend.title = element_text(size=5),
+        legend.text = element_text(size=5)) 
+
+```
+
+Focus on the largest shareholders
+
+```{r}
+powers <- quotas %>%
+  select(country,cal_before,cal_current,total) %>%
+  arrange(-(cal_current)) 
+greatpowers1 <- top_n(powers,10,cal_current)
+
+powers <- quotas %>%
+  select(country,cal_before,cal_current,total) %>%
+  arrange(-(cal_before)) 
+greatpowers0 <- top_n(powers,10,cal_before)
+
+vec_5 <- c("developed","developing","developed","developed","developed","developing","developed","developing","developed","developing")
+attach(greatpowers1)
+greatpowers1$type <- vec_5
+
+vec_6 <- c("developed","developed","developing","developed","developed","developed","developed","developed","developed","developed")
+attach(greatpowers0)
+greatpowers0$type <- vec_6
+
+p3 <- greatpowers0 %>%
+  ggplot(aes(x=country, y=total,fill=type))+
+  geom_col()+ 
+  #change color
+  scale_fill_manual(values=c("#771C19", "#E25033"))+ 
+  labs(title="Quota growth rate of 2006top10", #title
+       x="Country", 
+       y="Quota Growth Rate")+ 
+  #rotate the x axis title and change its size and position
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size=5), 
+  #adjust axis, title and legend
+        axis.title.x = element_text(size=8), 
+        axis.title.y = element_text(size=5), 
+        plot.title=element_text(size=8), 
+        legend.key.size = unit(0.3, "cm"), 
+        legend.title = element_text(size=8), 
+        legend.text = element_text(size=8)) 
+
+p4 <- greatpowers0 %>%
+  ggplot(aes(x=country, y=cal_before,fill=type))+
+  geom_col()+ 
+  #change color
+  scale_fill_manual(values=c("#771C19", "#E25033"))+ 
+  labs(title="Quota shares of 2006top10", #title
+       x="Country", 
+       y="Quota shares 2006")+ 
+  #rotate the x axis title and change its size and position
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size=5), 
+  #adjust axis, title and legend
+        axis.title.x = element_text(size=8), 
+        axis.title.y = element_text(size=5), 
+        plot.title=element_text(size=8), 
+        legend.key.size = unit(0.3, "cm"), 
+        legend.title = element_text(size=8), 
+        legend.text = element_text(size=8)) 
+
+p5 <- greatpowers1 %>%
+  ggplot(aes(x=country, y=total,fill=type))+
+  geom_col()+ 
+  #change color
+  scale_fill_manual(values=c("#771C19", "#E25033"))+ 
+  labs(title="Quota growth rate of 2016top10", #title
+       x="Country", 
+       y="Quota Growth Rate")+ 
+  #rotate the x axis title and change its size and position
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size=5), 
+  #adjust axis, title and legend
+        axis.title.x = element_text(size=8), 
+        axis.title.y = element_text(size=5), 
+        plot.title=element_text(size=8), 
+        legend.key.size = unit(0.3, "cm"), 
+        legend.title = element_text(size=8), 
+        legend.text = element_text(size=8)) 
+
+p6 <- greatpowers1 %>%
+  ggplot(aes(x=country, y=cal_current,fill=type))+
+  geom_col()+ 
+  #change color
+  scale_fill_manual(values=c("#771C19", "#E25033"))+ 
+  labs(title="Quota Shares of 2016top10", #title
+       x="Country", 
+       y="Quota Shares 2016")+ 
+  #rotate the x axis title and change its size and position
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size=5), 
+  #adjust axis, title and legend
+        axis.title.x = element_text(size=8), 
+        axis.title.y = element_text(size=5), 
+        plot.title=element_text(size=8), 
+        legend.key.size = unit(0.3, "cm"), 
+        legend.title = element_text(size=8), 
+        legend.text = element_text(size=8)) 
+
+cowplot::plot_grid(p3,p4,p5,p6,nrow = 2,ncol = 2)
+
+```
+
+
+## 3. an empirical analysis of the effects of quota reform on voting rights and IMF conditionality. 
+
+import the dataset 'arrangement' and form a new dataset 'conditionality'(the dependent variable)
+
+```{r}
+arrangement <- read_excel("/Users/yuki/Desktop/PLSC 31101/assignments/Final project/data/arrangement.xlsx", sheet = 1) 
+
+conditionality <- arrangement %>%
+  filter(Conditionality == "Yes") %>%
+  select(country,ArrID,ArrType,IniPgmYr,BoardActDate,ReviewType,TotalAccess,Comments) %>%
+  filter(IniPgmYr<2017) %>%
+  group_by(country) %>%
+  count(country) %>%
+  rename(conditionality = n)
+head(conditionality)
+# the dependent variable is the number of types of conditionality of a member state
+  
+```
+
+import the dataset 'CV'(control variables) and 'DV1_votes'(the first dependent variable)
+```{r}
+CV <- read_excel("/Users/yuki/Desktop/PLSC 31101/assignments/Final project/data/CV.xlsx", sheet = 1)
+
+DV1_votes <- read_excel("/Users/yuki/Desktop/PLSC 31101/assignments/Final project/data/DV1_votes.xlsx", sheet = 1)
+
+```
+
+merge the datasets and run the regression model
+
+```{r}
+factors <- CV %>%
+    #use inner_join to keep all observations 
+  inner_join (quotas,by = c("country"))  
+
+merge1 <- factors %>%
+  inner_join(DV1_votes,by = c("country")) %>%
+  rename(gdpPercap = `GDP per capita`,
+         reserves_debt = `Total reserves (% of total external debt)`,
+         FDI = `Foreign direct investment, net inflows`,
+         IMFcredit = `Use of IMF credit`,
+         account_balance = `Current account balance`,
+         quotas2006 = cal_before,
+         votes2016 = vote_percentage) %>%
+  select(country,gdpPercap,reserves_debt,FDI,IMFcredit, account_balance,quotas2006,votes2016)
+
+merge2 <- merge1 %>%
+  inner_join(conditionality,by = c("country"))
+
+#model1: only one independent variable,investigating the relationship between quotas before the reform and votes after the reform
+mod1<-lm(votes2016~quotas2006, data=merge1) 
+#model2: including all control variables
+mod2<-lm(votes2016~log(gdpPercap)+reserves_debt+FDI+IMFcredit+account_balance+quotas2006, data=merge1) 
+#model3: only two independent variables, investigating th quotas and votes' influence on the IMF conditionality on member states
+mod3<-lm(conditionality~quotas2006+votes2016, data= merge2)
+#model3: including all control variables
+mod4<-lm(conditionality~log(gdpPercap)+reserves_debt+FDI+IMFcredit+account_balance+quotas2006+votes2016, data=merge2) 
+
+stargazer(mod1, mod2,mod3,mod4,
+          title = "Regression Results1",
+          type = "text",
+          dep.var.labels = "DV: Voting Rights", 
+          #remove and keep targeted results 
+          omit="Constant", 
+          keep.stat="n",
+          style="ajps", 
+          #write the file
+          out="regression-table1.txt")
+```
+

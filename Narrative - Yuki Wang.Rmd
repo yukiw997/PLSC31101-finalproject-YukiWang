@@ -1,0 +1,137 @@
+---
+title: "Narrative"
+author: "Yuki Wang"
+date: "Fall 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Brief substantive background and goal
+
+The IMF is criticized for its lack of legitimacy and autonomy today. To deal with such criticism, the IMF initiated three rounds of quota and governance reforms since 2006 to reflect the increasing importance of emerging market countries (IMF 2018). The main mission of reform is the revision of quota formulas to increase the quota shares and voting rights of developing countries.
+
+This research focuses on the effect of IMF reform (the newly updated quotas) and its influence on the IMF conditionality. Conditionality,the packages of policy reforms a country promises to undertake in exchange for IMF resources, is one of the primary policy tools of the IMF.
+
+## Collecting data
+1. collect data from the IMF website to get the current voting power of member states, form a dataframe 'votes', and write the dataframe to a csv file 'votes.csv', and the excel form of it is 'DV1_votes.xlsx'. 
+"IMF Members' Quotas and Voting Power, and IMF Board of Governors"
+https://www.imf.org/external/np/sec/memdir/members.aspx#Z
+
+The data is all in the form of chart, and the usual way of html_nodes we learned in class is not so useful since all the numbers and country names are scattered. Therefore, I use the code of "html_table" to scrap tables in the page.
+
+There are more than 30 charts on the searching page, and not all of them are useful information. The information of member states are listed in alphabetic order in different tables, so I write a function to scrap all the tables I need and use the "map_dfr" to combine them into one chart.
+
+2. I also tired to collect data from the news section of the IMF website.Set the keyword as "quota formulas" ,the news type as "News article", and return the results.  https://www.imf.org/en/News/SearchNews#q=quota%20formula&sort=%40imfdate%20descending
+
+I planned to count the times of "quota formulas" each year to see the general trend and as a variable to represent the reform to some extent. However,the selectorgadget cannot work in the searching page. I found that the label I caught did not show in the source page because it is a dynamic website and the returned content is in JSON format. I tired to use the "httr" and "rjson" packages, but it did not work as I expected. I do not put the code in the project but attach it in the 'appendix.rmd'.
+
+3. download data from the IMF website and the World Bank.
+* IMF Quota and Governance Publications
+Updated IMF Quota:https://www.imf.org/external/np/fin/quotas/2018/0818.htm
+import the excel file as 'quotas'
+* IMF Monitoring of Fund Arrangements (MONA) Database
+Country-level data:https://www.imf.org/external/np/pdr/mona/Country.aspx
+import the excel file as 'arrangement'
+* World Bank Open Data 
+https://data.worldbank.org/indicator
+import the excel file as 'CV'
+
+## Pre-processing data
+1. For 'votes'.
+use 'rename' to rename the columns; use 'as.numeric' to convert 'vote_percentage' to numeric vectors; use 'select' to keep the columns 'country' and 'vote_percentage'; use 'arrange' to arrange by country; use 'na.omit' to remove all the NAs.
+
+2. For 'quotas'.
+use 'select' to keep the columns with calculated quotas.
+* cal_before: calculated quota shares before the first round of reform (2006) 
+* cal_review: calculated quota shares after the first round of reform (2008)
+* cal_previous: calculated quota shares after the second round of reform (2012)
+* cal_current: calculated quota shares after the third round of reform (2016)
+
+use 'as.numeric' to convert certain columns to numeric vectors to make further calculation; use 'mutate' to calculate quota growth rates during each period of each country,and define them as new variables.
+* round1:quota growth rate of the country during the first round reform
+* round2:quota growth rate of the country during the second round reform
+* round3:quota growth rate of the country during the third round reform
+* total:quota growth rate of the country during all the three rounds of reform
+   
+2.1 For 'group1','group2','group3' <- quotas.
+use 'select' to separate three rounds to form three subsets; use 'filter(!is.na())'to remove all NAs; use 'arrange' to arrange the three subsets by quota growth rate
+
+2.2 For 'positive_group n' and 'negative_group n' <- group1,2,3.
+use 'top_n' to find the countries with the highest and lowest quota growth rate during each round reform.For example:
+* positive_group1: 30 countries with the highest quota growth rate during the first round
+* negative_group1: 30 countries with the lowest quota growth rate during the first round
+
+2.3 For 'quota_growth'.
+create new vectors to calculate the average quotas and average quota growth rate of each subset(positive_group1/2/3 or negative_group1/2/3) . For example:
+* mean1_pg: average quota growth rate of the positive_group1 (30 countries with the highest quota growth rate during the first round)
+* mean1_pq: average quotas of the positive_group1 (30 countries with the highest quota growth rate during the first round)
+* mean2_ng: average quota growth rate of the negative_group2 (30 countries with the lowest quota growth rate during the second round)
+* mean2_nq: average quotas of the negative_group2 (30 countries with the lowest quota growth rate during the second round)
+use these vectors to create lists, and use 'data.frame' to create a new dataframe called 'quota_growth'; use 'colnames' to rename the columns of the dataframe
+
+2.4 For 'greatpowers'.
+use 'select' to keep columns 'country' 'cal_before' 'cal_current'  'total'; use 'arrange' to arrange countries by quotas before the first round and after the third round; use 'top_n' to find the 10 largest shareholder of the IMF in 2006 and 2016; use 'attach' to add a new column called 'type' to defind whether the country is a developed or developing countries.
+* greatpowers0: 10 largest shareholder of the IMF before the first round of reform
+* greatpowers1: 10 largest shareholder of the IMF after the third round of reform
+
+3. For 'conditionality' <- arrangement.
+use 'filter' to select countries with conditionality == "Yes" and the programs initialed before 2017; use 'group_by' and 'count' to calculate the number of types of conditionality of each country; use 'rename' to rename the column 'conditionality' to 'n'.
+
+4. For 'merge1' and 'merge2'.
+use 'inner_join' to combine the dataframe 'CV' 'quotas' and 'DV1_votes' (keep all the observations) to form merge1; use 'inner_join' to combine 'merge1' and 'conditionality' to form merge2.
+* gdpPercap:GDP per capita (current US$)
+* reserve_debt:International reserves to total external debt stocks
+* FDI:Foreign direct investment, net inflows (BoP, current US$)
+* IMFcredit:Use of IMF Credit: Data related to the operations of the IMF are provided by the IMF Treasurer’s Department
+* Account_balance:Current account balance (BoP, current US$)
+* quotas2006:quotas before the first round reform
+* votes2016: votes after the third round reform
+* conditionality: the number of types of conditionality of each country
+
+## Analysis and visualization
+1. Plot from the dataframe 'quota_growth'
+
+![Average quotas and growth rate of main countries](/Users/yuki/Desktop/PLSC 31101/assignments/Final project/results/plot1.png)
+
+* It seems that quota shares before the reform and the quota growth rate during the reform are inversely related.
+* The difference between the positive and negative groups' mean quota shares became smaller compared with the first round reform, while the gap of growth rates between the two groups became larger.
+* It is strange that the mean of quota shares of positive group is so small, showing that there is actually a polarization in the IMF as the reforms goes on.
+
+2. Plot from the dataframe 'quotas'
+
+![Quota growth rate by Quota](/Users/yuki/Desktop/PLSC 31101/assignments/Final project/results/plot2.png)
+
+* Generally speaking, countries with low quota shares before the first round enjoy a higher growth rate during the three round of reform. However, the trend is not that obvious according to the plot.
+
+3. Plot from the dataframe 'greatpowers0' and 'greatpowers1'
+
+![Quota growth rate and quotas of greatpowers](/Users/yuki/Desktop/PLSC 31101/assignments/Final project/results/plot3.png)
+
+From the graphs, we can see:
+* Before the first round, China is the only developing countries among the largest shareholders (top10 quota shares). After the third round, there are 4 developing countries of 10. BRICKS, especially China, benefit hugely from the reform.
+* Among the current largest shareholders, all countries with the positive growth rate are developing countries.
+* Before the first round, US's quota shares are far more than other great powers, but now China is drawing near. China enjoys the highest quota growth rate in great powers.
+* US is still the most influential one.
+
+Combine the previous finding:
+The IMF quota and governance reform has some huge impact on the power distribution in the organization. Many emerging powers benefit from the reform, but its influence is limited in those developing countries with relative stronger economic power.Many low-income countries' status are even worse.
+
+4.Regression result.
+
+The relationship between quotas or votes between the IMF conditionality is not significant, showing that the reform did not influence the IMF conditionality. The actucal impact of the reform on IMF governance is not so strong or there may be other factors should be included.
+
+There is strong relationship between the voting rights in 2016 and the quotas before the reform. But the coefficient is positive, not as the second plot suggested, showing there are some countries with low quota shares still left behind in the reform and there are countries with high quota shares taking advantage of its original status to get benefit from the reform.
+
+## Future Work
+
+Learn how to scrap from a dynamic website, and scrap the information from the IMF news section searching page.
+
+More literature on the IMF conditionality to see extra variables which can be added into the model.
+
+A more reasonable way to process the DV and IV or a revision of the model, trying to increase the accountability of the model.
+
